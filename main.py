@@ -6,7 +6,6 @@ import signal
 import sys
 import random
 import time
-import asyncio
 from contextlib import closing
 
 from telegram import Update, User
@@ -43,10 +42,6 @@ LEADERBOARD_LIMIT = 15
     # Stops the same accuser from farming points on the same target by spamming
     # "کسشر" over and over in a row.
 SCORE_COOLDOWN_SECONDS = 60
-
-# Random ping configuration
-PING_TARGET = "MeSori_Bot"  # Without the @ symbol
-PING_CHAT_ID = None  # Set this to a specific chat ID to send to a group, or None to send direct message
 
 logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -198,33 +193,6 @@ def display_name(first: str, last: str, username: str) -> str:
         parts = [p for p in (first, last) if p]
         name = " ".join(parts).strip() or "ناشناس"
         return _html_escape(name) + (f" (@{_html_escape(username)})" if username else "")
-
-    # ---------------------------------------------------------------------------
-    # Random ping task
-    # ---------------------------------------------------------------------------
-async def send_random_ping(application: Application) -> None:
-        """Send a random ping message to the target at random intervals (1-24h)."""
-        try:
-            if PING_CHAT_ID:
-                await application.bot.send_message(
-                    chat_id=PING_CHAT_ID,
-                    text=f"Hi @{PING_TARGET}! 👋"
-                )
-            else:
-                # Try to send as direct message to the bot username
-                await application.bot.send_message(
-                    chat_id=f"@{PING_TARGET}",
-                    text="کص مادرت سوری"
-                )
-            log.info("Pinged @%s", PING_TARGET)
-        except Exception as e:
-            log.warning("Failed to send ping to @%s: %s", PING_TARGET, e)
-
-        # Schedule next ping for 1-24 hours from now
-        delay_seconds = random.randint(3600, 86400)  # 1 to 24 hours in seconds
-        log.info("Next ping scheduled in %d seconds (%.1f hours)", delay_seconds, delay_seconds / 3600)
-        await asyncio.sleep(delay_seconds)
-        await send_random_ping(application)
 
     # ---------------------------------------------------------------------------
     # Handlers
@@ -386,12 +354,7 @@ def main() -> None:
         signal.signal(signal.SIGINT, _handle_signal)
 
         log.info("Bot starting (polling)...")
-        
-        # Start the random ping task
-        asyncio.create_task(send_random_ping(application))
-        
         application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
         main()
-
