@@ -21,17 +21,18 @@ from telegram.ext import (
     # ---------------------------------------------------------------------------
     # Configuration
     # ---------------------------------------------------------------------------
-    # The token now comes from an environment variable instead of being hardcoded.
-    # Set it before running, e.g.:
-    #   export BOT_TOKEN="123456:ABC-your-real-token"
-    #   python kashtar_bot.py
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+    # Set your bot token here, or use the BOT_TOKEN environment variable as fallback.
+    # Get a token from @BotFather on Telegram.
+BOT_TOKEN_HARDCODED = "YOUR_BOT_TOKEN_HERE"
 
-if not BOT_TOKEN:
+BOT_TOKEN = os.environ.get("BOT_TOKEN") or BOT_TOKEN_HARDCODED
+
+if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         sys.exit(
-            "ERROR: BOT_TOKEN environment variable is not set.\n"
-            "Run: export BOT_TOKEN=\"your:token-here\"  (get a fresh one from @BotFather —\n"
-            "if you had a token hardcoded in source before, revoke it with /revoke there first)."
+            "ERROR: No valid BOT_TOKEN found.\n"
+            "Option 1: Set BOT_TOKEN_HARDCODED in main.py\n"
+            "Option 2: Run: export BOT_TOKEN=\"your:token-here\"\n"
+            "(Get a fresh token from @BotFather — if you had a token hardcoded before, revoke it with /revoke there first)."
         )
 
 DB_PATH = os.environ.get("DB_PATH", "bot_scores.db")
