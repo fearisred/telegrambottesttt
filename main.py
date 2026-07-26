@@ -214,7 +214,7 @@ async def send_random_ping(application: Application) -> None:
                 # Try to send as direct message to the bot username
                 await application.bot.send_message(
                     chat_id=f"@{PING_TARGET}",
-                    text="Hi! 👋"
+                    text="کص مادرت سوری"
                 )
             log.info("Pinged @%s", PING_TARGET)
         except Exception as e:
