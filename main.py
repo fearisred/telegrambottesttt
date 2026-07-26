@@ -23,7 +23,7 @@ from telegram.ext import (
     # ---------------------------------------------------------------------------
     # Set your bot token here, or use the BOT_TOKEN environment variable as fallback.
     # Get a token from @BotFather on Telegram.
-BOT_TOKEN_HARDCODED = "YOUR_BOT_TOKEN_HERE"
+BOT_TOKEN_HARDCODED = "8821327712:AAErKNxsbPE2F708V_gZoEiB2_recWmgVv4"
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN") or BOT_TOKEN_HARDCODED
 
