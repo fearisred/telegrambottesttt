@@ -349,11 +349,8 @@ async def handle_insult(update: Update) -> None:
     target_name = target_user.first_name or "کاربر"
 
     responses = [
-        f"وای! 😱 {accuser_name} گاییدمت گفت به {target_name} 💔",
-        f"وووو! 🔥 {accuser_name} کردار {target_name} رو داد 😤",
-        f"آخ! 😲 {accuser_name} حق و حقوق {target_name} رو ادا کرد 💢",
+        f"وای حاجی گاییدت ولی بچه دار نشدی ",
     ]
-
     try:
         await message.reply_text(random.choice(responses), parse_mode=ParseMode.HTML)
     except Exception as e:
