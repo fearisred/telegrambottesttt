@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-import sqlite3
+import json
 import signal
 import sys
 import random
@@ -35,7 +35,7 @@ if not BOT_TOKEN or BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         "(Get a fresh token from @BotFather — if you had a token hardcoded before, revoke it with /revoke there first)."
     )
 
-DB_PATH = os.environ.get("DB_PATH", "bot_scores.db")
+DB_PATH = os.environ.get("DB_PATH", "bot_scores.json")
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "INFO").upper()
 
 LEADERBOARD_LIMIT = 15
@@ -57,6 +57,7 @@ log = logging.getLogger("kashtar-bot")
 # Persian word matching
 # ---------------------------------------------------------------------------
 _TARGET_WORD = "کسشر"
+_INSULT_WORD = "گاییدمت"
 LEADERBOARD_TRIGGER = "کسشرگویان"
 
 _WORD_BOUNDARY = r"(?:^|\s|[.!؟،,:؛\-—()\"'«»])"
@@ -65,6 +66,12 @@ _WORD_BOUNDARY = r"(?:^|\s|[.!؟،,:؛\-—()\"'«»])"
 # plural/possessive suffix (ه, ها, ی, و ...), or end of string.
 TARGET_REGEX = re.compile(
     _WORD_BOUNDARY + re.escape(_TARGET_WORD) + r"(?:ها|های|هایی)?(?=\s|[.!؟،,:؛\-—()\"'«»]|$)",
+    re.UNICODE,
+)
+
+# Regex for insult word
+INSULT_REGEX = re.compile(
+    _WORD_BOUNDARY + re.escape(_INSULT_WORD) + r"(?=\s|[.!؟،,:؛\-—()\"'«»]|$)",
     re.UNICODE,
 )
 
@@ -94,6 +101,13 @@ def contains_target_word(text: str) -> bool:
     return bool(TARGET_REGEX.search(normalized))
 
 
+def contains_insult_word(text: str) -> bool:
+    if not text:
+        return False
+    normalized = _normalize_persian(text)
+    return bool(INSULT_REGEX.search(normalized))
+
+
 def is_leaderboard_request(text: str) -> bool:
     if not text:
         return False
@@ -101,101 +115,114 @@ def is_leaderboard_request(text: str) -> bool:
     return normalized == LEADERBOARD_TRIGGER
 
 # ---------------------------------------------------------------------------
-# Database
+# Database (JSON-based)
 # ---------------------------------------------------------------------------
 
+def _load_db() -> dict:
+    """Load scores from JSON file."""
+    if os.path.exists(DB_PATH):
+        try:
+            with open(DB_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            log.error("Error loading database: %s", e)
+            return {}
+    return {}
+
+
+def _save_db(data: dict) -> None:
+    """Save scores to JSON file."""
+    try:
+        with open(DB_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log.error("Error saving database: %s", e)
+
+
 def db_init() -> None:
-    with closing(sqlite3.connect(DB_PATH)) as conn:
-        conn.execute("PRAGMA journal_mode = WAL")
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS scores (
-                chat_id    INTEGER NOT NULL,
-                user_id    INTEGER NOT NULL,
-                score      INTEGER NOT NULL DEFAULT 0,
-                first_name TEXT,
-                last_name  TEXT,
-                username   TEXT,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (chat_id, user_id)
-            )
-            """
-        )
-        conn.commit()
+    """Initialize database."""
+    if not os.path.exists(DB_PATH):
+        _save_db({})
     log.info("Database initialized at %s", DB_PATH)
 
 
 def db_add_point(chat_id: int, user: User) -> int:
-    now = int(time.time())
-    first = (user.first_name or "")[:128]
-    last = (user.last_name or "")[:128]
-    uname = (user.username or "")[:64] if user.username else None
-
-    with closing(sqlite3.connect(DB_PATH)) as conn:
-        conn.execute("PRAGMA busy_timeout = 3000")
-        conn.execute(
-            """
-            INSERT INTO scores (chat_id, user_id, score, first_name, last_name, username, updated_at)
-            VALUES (?, ?, 1, ?, ?, ?, ?)
-            ON CONFLICT(chat_id, user_id) DO UPDATE SET
-                score = score + 1,
-                first_name = excluded.first_name,
-                last_name = excluded.last_name,
-                username  = excluded.username,
-                updated_at = excluded.updated_at
-            """,
-            (chat_id, user.id, first, last, uname, now),
-        )
-        conn.commit()
-        cur = conn.execute(
-            "SELECT score FROM scores WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user.id),
-        )
-        row = cur.fetchone()
-    return int(row[0]) if row else 0
+    """Add a point to a user in a chat."""
+    data = _load_db()
+    
+    chat_key = str(chat_id)
+    user_key = str(user.id)
+    
+    if chat_key not in data:
+        data[chat_key] = {}
+    
+    if user_key not in data[chat_key]:
+        data[chat_key][user_key] = {
+            "score": 0,
+            "first_name": user.first_name or "",
+            "last_name": user.last_name or "",
+            "username": user.username or "",
+            "updated_at": int(time.time()),
+        }
+    
+    data[chat_key][user_key]["score"] += 1
+    data[chat_key][user_key]["first_name"] = user.first_name or ""
+    data[chat_key][user_key]["last_name"] = user.last_name or ""
+    data[chat_key][user_key]["username"] = user.username or ""
+    data[chat_key][user_key]["updated_at"] = int(time.time())
+    
+    _save_db(data)
+    return data[chat_key][user_key]["score"]
 
 
 def db_get_top(chat_id: int, limit: int = LEADERBOARD_LIMIT):
-    with closing(sqlite3.connect(DB_PATH)) as conn:
-        cur = conn.execute(
-            """
-            SELECT user_id, score, first_name, last_name, username
-            FROM scores
-            WHERE chat_id = ? AND score > 0
-            ORDER BY score DESC, updated_at ASC
-            LIMIT ?
-            """,
-            (chat_id, limit),
-        )
-        return cur.fetchall()
+    """Get top users in a chat."""
+    data = _load_db()
+    chat_key = str(chat_id)
+    
+    if chat_key not in data:
+        return []
+    
+    users = []
+    for user_id, user_data in data[chat_key].items():
+        if user_data.get("score", 0) > 0:
+            users.append((
+                int(user_id),
+                user_data["score"],
+                user_data.get("first_name", ""),
+                user_data.get("last_name", ""),
+                user_data.get("username", ""),
+            ))
+    
+    # Sort by score descending, then by updated_at ascending
+    users.sort(key=lambda x: (-x[1], data[chat_key][str(x[0])].get("updated_at", 0)))
+    return users[:limit]
 
 
 def db_get_score(chat_id: int, user_id: int) -> int:
-    with closing(sqlite3.connect(DB_PATH)) as conn:
-        cur = conn.execute(
-            "SELECT score FROM scores WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        )
-        row = cur.fetchone()
-    return int(row[0]) if row else 0
+    """Get a user's score in a chat."""
+    data = _load_db()
+    chat_key = str(chat_id)
+    user_key = str(user_id)
+    
+    if chat_key in data and user_key in data[chat_key]:
+        return data[chat_key][user_key].get("score", 0)
+    return 0
 
 
 def db_reset_score(chat_id: int, user_id: int) -> int:
     """Reset a user's score in a chat to zero. Returns the previous score (0 if none)."""
-    with closing(sqlite3.connect(DB_PATH)) as conn:
-        cur = conn.execute(
-            "SELECT score FROM scores WHERE chat_id = ? AND user_id = ?",
-            (chat_id, user_id),
-        )
-        row = cur.fetchone()
-        prev = int(row[0]) if row else 0
-        if row:
-            conn.execute(
-                "UPDATE scores SET score = 0, updated_at = ? WHERE chat_id = ? AND user_id = ?",
-                (int(time.time()), chat_id, user_id),
-            )
-            conn.commit()
-    return prev
+    data = _load_db()
+    chat_key = str(chat_id)
+    user_key = str(user_id)
+    
+    if chat_key in data and user_key in data[chat_key]:
+        prev = data[chat_key][user_key].get("score", 0)
+        data[chat_key][user_key]["score"] = 0
+        data[chat_key][user_key]["updated_at"] = int(time.time())
+        _save_db(data)
+        return prev
+    return 0
 
 # ---------------------------------------------------------------------------
 # Anti-spam: (chat_id, accuser_id, target_id) -> last score timestamp
@@ -239,6 +266,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await send_leaderboard(update, chat_id)
         return
 
+    # Handle insult word
+    if contains_insult_word(text):
+        await handle_insult(update)
+        return
+
     if not contains_target_word(text):
         return
 
@@ -264,8 +296,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     try:
         new_score = db_add_point(chat_id, target_user)
-    except sqlite3.Error as e:
-        log.error("DB error: %s", e)
+    except Exception as e:
+        log.error("Error adding point: %s", e)
         return
 
     accuser_name = accuser.first_name or "یکی"
@@ -282,6 +314,44 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"رکورد جدید: {new_score} امتیاز",
         f"اوه {target_name} جان، {accuser_name} گیر داد بهت 😬\n"
         f"داری میری سمت {new_score} امتیاز، یه کم آروم‌تر برو رو حرفات",
+    ]
+
+    try:
+        await message.reply_text(random.choice(responses), parse_mode=ParseMode.HTML)
+    except Exception as e:
+        log.warning("Could not send reply: %s", e)
+
+
+async def handle_insult(update: Update) -> None:
+    """Handle گاییدمت insult."""
+    if not update.message:
+        return
+    
+    message = update.message
+    replied = message.reply_to_message
+    if replied is None:
+        return
+
+    target_user = replied.from_user
+    accuser = message.from_user
+    if target_user is None or target_user.is_bot or accuser is None:
+        return
+
+    # Don't let people insult themselves
+    if target_user.id == accuser.id:
+        try:
+            await message.reply_text("خودت رو داشتی؟ 😆")
+        except Exception:
+            pass
+        return
+
+    accuser_name = accuser.first_name or "یکی"
+    target_name = target_user.first_name or "کاربر"
+
+    responses = [
+        f"وای! 😱 {accuser_name} گاییدمت گفت به {target_name} 💔",
+        f"وووو! 🔥 {accuser_name} کردار {target_name} رو داد 😤",
+        f"آخ! 😲 {accuser_name} حق و حقوق {target_name} رو ادا کرد 💢",
     ]
 
     try:
@@ -327,6 +397,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "سلام بچه‌ها! 👋\n\n"
         "طرز کارم خیلی سادست:\n"
         "• اگه کسی تو گروه کسشر گفت، فقط ریپلای کن روی پیامش و بنویس <b>کسشر</b> تا یه امتیاز ممنوع بگیره 😂\n"
+        "• اگه بخوای کسی رو <b>گاییدمت</b> بگویی، روی پیامش ریپلای کن و بنویس <b>گاییدمت</b> 😏\n"
         "• هر وقت خواستید ببینید کی بیشتر کسشر گفته، تو گروه بفرستید: <b>کسشرگویان</b>\n"
         "• برای دیدن امتیاز خودت: /score\n\n"
         "پس مراقب حرفاتون باشید که ثبت نمیشه! 😎"
@@ -399,15 +470,14 @@ async def cmd_resetscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             except Exception:
                 pass
             return
-        # Try to fetch name info from DB if present
-        with closing(sqlite3.connect(DB_PATH)) as conn:
-            cur = conn.execute(
-                "SELECT first_name, last_name, username FROM scores WHERE chat_id = ? AND user_id = ?",
-                (chat_id, target_id),
-            )
-            row = cur.fetchone()
-            if row:
-                target_first, target_last, target_username = row
+        # Try to fetch name info from JSON if present
+        data = _load_db()
+        chat_key = str(chat_id)
+        user_key = str(target_id)
+        if chat_key in data and user_key in data[chat_key]:
+            target_first = data[chat_key][user_key].get("first_name", "")
+            target_last = data[chat_key][user_key].get("last_name", "")
+            target_username = data[chat_key][user_key].get("username", "")
 
     if not target_id:
         try:
@@ -418,8 +488,8 @@ async def cmd_resetscore(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         prev = db_reset_score(chat_id, target_id)
-    except sqlite3.Error as e:
-        log.error("DB error while resetting score: %s", e)
+    except Exception as e:
+        log.error("Error while resetting score: %s", e)
         try:
             await update.message.reply_text("خطا هنگام ریست امتیاز رخ داد.")
         except Exception:
